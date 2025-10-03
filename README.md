@@ -1,6 +1,6 @@
 Fully HTML 5 Self Contained Game (One file)
 # 🎮 Little Jack  
-![Header](Heaer.png)
+![Header](Header.png)
 A simple retro-style platformer inspired by **Bomb Jack**, built entirely with **HTML, CSS, and JavaScript**.  
 Play as 🕺 Jack, collect 💣 bombs, grab ⭐ power-ups, dodge 👾 enemies, and survive as long as you can!  
 
