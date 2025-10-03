@@ -1,0 +1,329 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<title>Little Jack</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  body{margin:0;background:#000;color:#fff;font-family:sans-serif;overflow:hidden;
+       display:flex;justify-content:center;align-items:center;height:100vh}
+  #wrap{width:100%;height:100%;display:flex;justify-content:center;align-items:center}
+  canvas{
+    width:100%;max-width:400px;max-height:600px;aspect-ratio:2/3;
+    background:#012;border-radius:8px;touch-action:none;display:block;
+  }
+  #overlay{position:fixed;inset:0;display:flex;flex-direction:column;
+           align-items:center;justify-content:center;background:#000c;z-index:50;cursor:pointer}
+  #overlay h1{color:gold;font-size:8vw;margin:0}
+  #overlay p{color:#ccc;font-size:4vw}
+  #controls{position:fixed;left:50%;bottom:3vh;transform:translateX(-50%);
+            display:flex;gap:4vw}
+  .btn{width:14vw;height:14vw;max-width:70px;max-height:70px;border-radius:50%;
+       display:flex;align-items:center;justify-content:center;background:#fff2;color:#fff;
+       font-size:clamp(18px,5vw,28px);user-select:none}
+  #hud{position:fixed;top:10px;left:12px;display:flex;gap:20px;font-size:16px}
+  #hudRight{position:fixed;top:10px;right:12px;display:flex;gap:12px;
+            font-size:clamp(18px,3vw,28px)}
+  #hudRight div{cursor:pointer}
+  #restartMenu{position:fixed;inset:0;background:#000a;display:none;
+               align-items:center;justify-content:center;z-index:60}
+  #restartMenu div{background:#222;padding:20px;border-radius:10px;text-align:center}
+  #restartMenu button{margin:10px;padding:10px 20px;font-size:18px;border:none;
+                      border-radius:6px;cursor:pointer}
+  #restartMenu button:hover{background:#444;color:#fff}
+</style></head><body>
+<div id="wrap"><canvas id="cv" width="400" height="600"></canvas></div>
+<div id="overlay"><h1>🎮 Little Jack</h1><p>Press Enter / Tap to Start</p></div>
+<div id="controls">
+  <div class="btn" id="L">⏪</div>
+  <div class="btn" id="R">⏩</div>
+  <div class="btn" id="J">⬆️</div>
+</div>
+<div id="hud">
+  <div id="scoreDisplay">Score: 0</div>
+  <div id="livesDisplay">❤️❤️❤️</div>
+  <div id="powerDisplay"></div>
+</div>
+<div id="hudRight">
+  <div id="musicToggle">🎵</div>
+  <div id="pauseToggle">⏸️</div>
+  <div id="restartBtn">🔄</div>
+  <div id="exitBtn">❌</div>
+</div>
+<div id="restartMenu">
+  <div>
+    <p>🔄 Restart Options</p>
+    <button id="restartLevel">Restart Level</button>
+    <button id="restartGame">Restart Game</button>
+    <button id="continueBtn">Continue</button>
+    <p style="font-size:12px;color:#aaa">Keys: 1=Level, 2=Game, 3=Continue</p>
+  </div>
+</div>
+<script>
+(()=>{const cv=document.getElementById("cv"),ctx=cv.getContext("2d"),
+O=document.getElementById("overlay"),
+musicBtn=document.getElementById("musicToggle"),
+pauseBtn=document.getElementById("pauseToggle"),
+restartBtn=document.getElementById("restartBtn"),
+exitBtn=document.getElementById("exitBtn"),
+restartMenu=document.getElementById("restartMenu"),
+btnLevel=document.getElementById("restartLevel"),
+btnGame=document.getElementById("restartGame"),
+btnContinue=document.getElementById("continueBtn"),
+scoreDisplay=document.getElementById("scoreDisplay"),
+livesDisplay=document.getElementById("livesDisplay"),
+powerDisplay=document.getElementById("powerDisplay");
+
+let player,bombs,enemies,plats,powerups,extras;
+let score=0,lives=3,gameOver=false,grace=0,level=1;
+let paused=false,exited=false; const keys={};
+let powerActive=false,powerTimer=0;
+let jumpPressed=false;
+let levelTransition=false,transitionTimer=0;
+
+// === AUDIO ===
+const AC=new (window.AudioContext||window.webkitAudioContext)();
+let themeMuted=false,themeInt=null;
+function beep(type,freq=440,dur=0.15,vol=0.2){
+ if(AC.state!=="running") return;
+ const o=AC.createOscillator(),g=AC.createGain();
+ o.type=type; o.frequency.value=freq;
+ g.gain.setValueAtTime(vol,AC.currentTime);
+ g.gain.exponentialRampToValueAtTime(0.001,AC.currentTime+dur);
+ o.connect(g); g.connect(AC.destination);
+ o.start(); o.stop(AC.currentTime+dur+0.05);
+}
+function arpeggio(){[600,800,1000].forEach((f,i)=>setTimeout(()=>beep("square",f,0.12,0.25),i*150));}
+function startTheme(){
+ if(themeInt) clearInterval(themeInt);
+ const seq=[523,659,784,659,880,784,659,523]; let i=0;
+ themeInt=setInterval(()=>{
+   if(!themeMuted && AC.state==="running"){beep("square",seq[i%seq.length],0.18,0.15);}
+   i++;
+ },300);
+}
+function toggleTheme(){
+ themeMuted=!themeMuted;
+ musicBtn.textContent=themeMuted?"🔇":"🎵";
+}
+
+// === Controls ===
+addEventListener("keydown",e=>{
+  keys[e.code]=true;
+  if(O.style.display!=="none"&&(e.code==="Enter"||e.code==="Space")) startGame();
+  if(e.code==="KeyM"){ toggleTheme(); }
+  if(e.code==="KeyP"){ togglePause(); }
+  if(e.code==="KeyR"){ openRestartMenu(); }
+  if(e.code==="Escape"){ exitGame(); }
+  if(restartMenu.style.display==="flex"){
+    if(e.code==="Digit1"){restartLevel();}
+    if(e.code==="Digit2"){restartGame();}
+    if(e.code==="Digit3"){continueGame();}
+  }
+});
+addEventListener("keyup",e=>keys[e.code]=false);
+function bindBtn(id,code,jump=false){const el=document.getElementById(id);
+ el.addEventListener("pointerdown",ev=>{ev.preventDefault();if(jump)jumpFn();else keys[code]=true;});
+ el.addEventListener("pointerup",()=>{if(!jump)keys[code]=false;});}
+bindBtn("L","ArrowLeft");bindBtn("R","ArrowRight");bindBtn("J","Space",true);
+
+// Tap to start
+O.addEventListener("click",startGame);
+musicBtn.addEventListener("click",toggleTheme);
+pauseBtn.addEventListener("click",togglePause);
+restartBtn.addEventListener("click",openRestartMenu);
+exitBtn.addEventListener("click",exitGame);
+btnLevel.addEventListener("click",restartLevel);
+btnGame.addEventListener("click",restartGame);
+btnContinue.addEventListener("click",continueGame);
+
+function togglePause(){paused=!paused; pauseBtn.textContent=paused?"▶️":"⏸️";}
+function openRestartMenu(){paused=true; restartMenu.style.display="flex";}
+function closeRestartMenu(){restartMenu.style.display="none"; paused=false;}
+function restartLevel(){initGame(level); closeRestartMenu();}
+function restartGame(){initGame(1); closeRestartMenu();}
+function continueGame(){closeRestartMenu();}
+function exitGame(){
+ exited=true; paused=true; gameOver=false;
+ O.style.display="flex"; O.innerHTML="<h1>👋 Thanks for Playing!</h1><p>Press Enter / Tap to Restart</p>";
+}
+
+// === Level Generator ===
+function loadLevel(n){
+  plats=[]; enemies=[]; bombs=[]; powerups=[]; extras=[];
+  let y=560, x=150;
+  for(let i=0;i<6;i++){
+    plats.push({x:x,y:y,w:100,h:10});
+    y -= 70+Math.random()*15;
+    if(y<150) break;
+    x += (Math.random()<0.5?-1:1) * (30+Math.random()*30);
+    if(x<20) x=20; if(x>280) x=280;
+  }
+
+  // Enemies
+  let eCount=1+Math.floor(n/2);
+  const types=["👾","🐦","🧟"];
+  for(let i=0;i<eCount;i++){
+    enemies.push({x:Math.random()*350,y:150+Math.random()*300,w:28,h:28,
+                  vx:Math.random()<0.5?2:-2,t:types[Math.floor(Math.random()*types.length)]});
+  }
+
+  // Bombs anchored to platforms
+  plats.forEach(pl => {
+    let count = 1 + Math.floor(Math.random() * 2);
+    for(let i=0; i<count; i++){
+      let bx = pl.x + 10 + Math.random() * (pl.w - 20);
+      let by = pl.y - 20;
+      bombs.push({x:bx,y:by,c:false});
+    }
+  });
+
+  // ⭐ Powerups sometimes above bombs
+  bombs.forEach(b=>{
+    if(Math.random()<0.1) powerups.push({x:b.x,y:b.y-20,c:false,t:"⭐"});
+  });
+
+  // ❤️ Extra life chance
+  if(Math.random()<0.2){
+    extras.push({x:40+Math.random()*320,y:120+Math.random()*400,c:false,t:"❤️"});
+  }
+}
+
+// === Game ===
+function startGame(){
+  exited=false;
+  O.style.display="none";
+  AC.resume();
+  startTheme();
+  initGame(1);
+}
+function initGame(n){
+  player={x:180,y:560,w:28,h:28,vy:0,onGround:false,jumps:1};
+  score=0; level=n; lives=3; gameOver=false; paused=false; powerActive=false;
+  pauseBtn.textContent="⏸️"; restartMenu.style.display="none";
+  loadLevel(level); grace=120;
+}
+function jumpFn(){
+  player.vy = -12;
+  player.jumps--;
+  beep("square", powerActive ? 900 : 600, 0.15, 0.25);
+}
+
+function update(){
+ if(gameOver||O.style.display!=="none"||paused||exited) return;
+
+ // === Level transition pause ===
+ if(levelTransition){
+   transitionTimer--;
+   if(transitionTimer <= 0){
+     level++;
+     loadLevel(level);
+     grace = 120;
+     levelTransition = false;
+   }
+   return;
+ }
+
+ if(keys.ArrowLeft) player.x-=2.5;
+ if(keys.ArrowRight) player.x+=2.5;
+
+ // Edge-triggered jump
+ if(keys.ArrowUp||keys.Space){
+   if(!jumpPressed && player.jumps>0){
+     jumpFn();
+   }
+   jumpPressed = true;
+ } else {
+   jumpPressed = false;
+ }
+
+ // Gravity (slower fall)
+ player.vy+=0.35;
+ let ny=player.y+player.vy,g=false;
+ if(ny+player.h>=600){ny=600-player.h;player.vy=0;g=true;}
+ plats.forEach(pl=>{
+   if(player.y+player.h<=pl.y&&ny+player.h>=pl.y&&player.x+player.w>pl.x&&player.x<pl.x+pl.w&&player.vy>=0){
+     ny=pl.y-player.h;player.vy=0;g=true;
+   }});
+ player.y=ny; player.onGround=g;
+ if(player.onGround){player.jumps = powerActive ? 2 : 1;}
+
+ // Keep inside screen
+ if(player.x<0) player.x=0;
+ if(player.x+player.w>400) player.x=400-player.w;
+ if(player.y<0){player.y=0; player.vy=0;}
+
+ bombs.forEach(b=>{
+   if(!b.c&&player.x<b.x+14&&player.x+player.w>b.x-14&&player.y<b.y+14&&player.y+player.h>b.y-14){
+     b.c=true; score+=100; beep("sine",1000,0.12,0.3);
+   }});
+
+ powerups.forEach(p=>{
+   if(!p.c&&player.x<p.x+14&&player.x+player.w>p.x-14&&player.y<p.y+14&&player.y+player.h>p.y-14){
+     p.c=true; powerActive=true; powerTimer=600; beep("triangle",1200,0.2,0.3);
+   }});
+
+ extras.forEach(x=>{
+   if(!x.c&&player.x<x.x+14&&player.x+player.w>x.x-14&&player.y<x.y+14&&player.y+player.h>x.y-14){
+     x.c=true; if(lives<5) lives++; beep("sine",700,0.2,0.4);
+   }});
+
+ enemies.forEach(e=>{
+   e.x+=e.vx; if(e.x<=0||e.x+e.w>=400) e.vx*=-1;
+   if(grace<=0 && !(player.x+player.w<e.x||player.x>e.x+e.w||player.y+player.h<e.y||player.y>e.y+e.h)){
+     lives--; beep("sawtooth",200,0.4,0.3);
+     if(lives<=0){gameOver=true;}
+     else {player.x=180;player.y=560;player.vy=0;grace=120;}
+   }
+ });
+
+ if(bombs.every(b=>b.c) && !levelTransition){
+   arpeggio();
+   levelTransition = true;
+   transitionTimer = 120; // ~2 seconds
+ }
+
+ if(grace>0) grace--;
+ if(powerActive){powerTimer--; if(powerTimer<=0) powerActive=false;}
+
+ scoreDisplay.textContent="Score: "+score;
+ livesDisplay.textContent="❤️".repeat(lives);
+ powerDisplay.textContent=powerActive?"⭐ DOUBLE JUMP":"";
+}
+
+function draw(){
+ ctx.clearRect(0,0,400,600);
+ ctx.fillStyle="green";plats.forEach(p=>ctx.fillRect(p.x,p.y,p.w,p.h));
+ ctx.font="22px Arial";bombs.forEach(b=>{if(!b.c) ctx.fillText("💣",b.x,b.y);});
+ ctx.font="22px Arial";powerups.forEach(p=>{if(!p.c) ctx.fillText(p.t,p.x,p.y);});
+ ctx.font="22px Arial";extras.forEach(x=>{if(!x.c) ctx.fillText(x.t,x.x,x.y);});
+ ctx.font="28px Arial";enemies.forEach(e=>ctx.fillText(e.t,e.x,e.y+e.h));
+ ctx.fillText("🕺",player.x,player.y+player.h);
+
+ if(grace>0 && !levelTransition){
+   ctx.fillStyle="yellow";
+   ctx.font="20px Arial";
+   ctx.fillText("READY!",150,100);
+ }
+
+ if(levelTransition){
+   ctx.fillStyle="yellow";
+   ctx.font="28px Arial";
+   ctx.fillText("READY!",150,280);
+ }
+
+ if(gameOver){
+   ctx.fillStyle="red";
+   ctx.font="32px Arial";
+   ctx.fillText("GAME OVER",90,300);
+ }
+
+ if(paused && restartMenu.style.display!=="flex"){
+   ctx.fillStyle="rgba(255,255,255,0.7)";
+   ctx.font="32px Arial";
+   ctx.fillText("PAUSED",130,300);
+ }
+}
+
+function loop(){update();draw();requestAnimationFrame(loop);}
+initGame(1); loop();
+})();
+</script>
+</body></html>
