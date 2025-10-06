@@ -70,7 +70,15 @@ GAME OVER
 - Pure **Canvas 2D rendering**  
 - Procedural **platform + enemy generation**  
 - In-browser **Web Audio API** for retro sound effects  
-- No external sprites — uses **emoji graphics**  
+- No external sprites — uses **emoji graphics**
+- 
+---
+
+## 🧑‍💻 Developers
+**Author:** Mike Williams  
+**Engine:** Pure JavaScript / Canvas / WebAudio  
+**Compatibility:** Any modern browser  
+**Purpose:** Stand-alone retro game demo & HTML5 teaching example  
 
 ---
 
